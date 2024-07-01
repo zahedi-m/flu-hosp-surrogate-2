@@ -1,0 +1,81 @@
+meta_data:
+  basin_map_csv_path: meta_data/mapping_basin_to_state.csv
+  bucket_name: "gs_mehdi"
+  population_csv_path: meta_data/populations.csv
+  srcPath: ..
+  dataPath: ./data
+  metaPath: ./meta_data
+
+#
+model:
+  NUM_COMP: 4 # number of output compartments
+  POPULATION_SCALER: 1_000_000
+  MAX_SEQ_LENGTH: 245
+  #total dimension including temporal dim
+  define: &x_dim 7
+  x_dim: *x_dim
+  #just temporal dimension
+  xt_dim: 1
+  y_dim: 51
+  num_nodes: 51
+  z_dim: 100
+  r_dim: 100
+  seq_len: 244
+  in_channels: *x_dim
+  embed_out_dim: 256
+  out_channels: 32
+  max_diffusion_step: 1
+  #encoder
+  encoder_num_rnn: 1
+  #decoder
+  decoder_num_rnn: 2
+  decoder_hidden_dims: [1024, 1024]
+  #z_enocder
+  context_percentage: .3
+
+train: 
+  max_epochs: 0
+  lr: .0001
+  lr_encoder: .0001
+  lr_decoder: .0001
+  lr_milestones: [40 ,50, 60]
+  lr_gamma: .8
+  patience: 10
+  gradient_clip_val: 1
+  l1_reg: .001
+  train_batch_size: 16
+  train_num_workers: 10
+  val_num_workers: 8
+  val_batch_size: 24
+
+#active learner
+active_learner:
+  max_iter: 200
+  initial_train_size: 2
+  batch_size_stat_compute: 64 
+  retriever_num_workers: 10
+  pool_num_workers: 8
+
+mstd:
+  acquisition_size: 10
+  acquisition_pool_fraction: .05
+  pool_loader_batch_size: 32
+lig: 
+  pool_loader_batch_size: 40
+  acquisition_pool_fraction: .05
+  acquisition_size: 10
+
+data:
+  x_col_names: ["R0", "days"]
+  frac_pops_names: ["Susceptible", "Latent","Recovered"]
+  initial_col_names: ["Latent", "Latent_vax", "Hospitalized_symptomatic", "Hospitalized_symptomatic_vax"]
+  output_compartments: ["Hospitalized", "Latent"]
+  initial_val_size: 2
+  initial_test_size: 2
+
+# temporal seasonlaity will be added to first dim of x
+# frac_pops are fractions
+# population/1M will be added as a feature
+# loss function: crps_gaussian
+
+
