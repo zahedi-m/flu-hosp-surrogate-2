@@ -98,8 +98,8 @@ class STNP(pl.LightningModule):
         """
         embed_out= self.get_input_embedding(x, xt)
         zs= self.sample_z(self.mu_z_global.to(y0_latent_prev.device), self.var_z_global.to(y0_latent_prev.device), y0_latent_prev.shape[0])
-        y_post= self.get_post(y0_latent_prev, embed_out, zs)
-        return y_post
+        mu_post, var_post= self.get_post(y0_latent_prev, embed_out, zs)
+        return mu_post, var_post
     
         #
     def update_y_stats(self, y_mean, y_std):
@@ -134,6 +134,9 @@ class STNP(pl.LightningModule):
             output, h0= self.embed(inputs, self.edge_index.to(x.device), self.edge_weight.to(x.device), h0)
             embed_out.append(output)
         return torch.stack(embed_out, dim=1)
+
+    def sample_post(self, mu_y, var_y):
+        return  mu_y+ torch.randn_like(mu_y)*  var_y.sqrt()
 
     def sample_z(self, mu_z, var_z, num_samples=1):
         """  
@@ -172,15 +175,17 @@ class STNP(pl.LightningModule):
             @return:
                 mu_y, vay_y: [B, L, y_dim]
         """
-        y_hosp_inc= self.rnn_decoder_hosp_inc(y0, embed_out, zs)
-        y_hosp_prev= self.rnn_decoder_hosp_prev(y0, embed_out, zs)
-        y_latent_inc= self.rnn_decoder_latent_inc(y0, embed_out, zs)
-        y_latent_prev= self.rnn_decoder_latent_prev(y0, embed_out, zs)
-        y_post= torch.cat([y_hosp_inc, y_hosp_prev, y_latent_inc, y_latent_prev], dim=-1)
-        return y_post
+        mu_hosp_inc, var_hosp_inc= self.rnn_decoder_hosp_inc(y0, embed_out, zs)
+        mu_hosp_prev, var_hosp_prev= self.rnn_decoder_hosp_prev(y0, embed_out, zs)
+        mu_latent_inc, var_latent_inc= self.rnn_decoder_latent_inc(y0, embed_out, zs)
+        mu_latent_prev, var_latent_prev= self.rnn_decoder_latent_prev(y0, embed_out, zs)
+        mu_post= torch.cat([mu_hosp_inc, mu_hosp_prev, mu_latent_inc, mu_latent_prev], dim=-1)
+        var_post= torch.cat([var_hosp_inc, var_hosp_prev, var_latent_inc, var_latent_prev], dim=-1)
+        return mu_post, var_post
     
     #
-    def loss_fn(self, y_pred:Tensor, 
+    def loss_fn(self, mu_post:Tensor,
+                var_post:Tensor, 
                 y_hosp_inc_true:Tensor, 
                 y_hosp_prev_true:Tensor,
                 y_latent_inc_true:Tensor, 
@@ -190,12 +195,13 @@ class STNP(pl.LightningModule):
         #[seq_len, z_dim]
         kl= torch.distributions.kl_divergence(dist.Normal(mu_z_post, self.get_sigma(var_z_post)), dist.Normal(mu_z_prior, self.get_sigma(var_z_prior))).sum()
         
-        y_hosp_inc, y_hosp_prev, y_latent_inc, y_latent_prev= torch.chunk(y_pred, self.NUM_COMP, dim=-1)
-      
-        nll_hosp_inc= self.mse(y_hosp_inc_true, y_hosp_inc)
-        nll_hosp_prev= self.mse(y_hosp_prev_true, y_hosp_prev)
-        nll_latent_inc= self.mse(y_latent_inc_true, y_latent_inc)
-        nll_latent_prev= self.mse(y_latent_prev_true, y_latent_prev)
+        mu_hosp_inc, mu_hosp_prev, mu_latent_inc, mu_latent_prev= torch.chunk(mu_post, self.NUM_COMP, dim=-1)
+        var_hosp_inc, var_hosp_prev, var_latent_inc, var_latent_prev= torch.chunk(var_post, self.NUM_COMP, dim=-1)
+
+        nll_hosp_inc= -dist.Normal(mu_hosp_inc, var_hosp_inc.sqrt()).log_prob(y_hosp_inc_true).mean(dim=(1, 2)).mean()
+        nll_hosp_prev= -dist.Normal(mu_hosp_prev, var_hosp_prev.sqrt()).log_prob(y_hosp_prev_true).mean(dim=(1, 2)).mean()
+        nll_latent_inc= -dist.Normal(mu_latent_inc, var_latent_inc.sqrt()).log_prob(y_latent_inc_true).mean(dim=(1, 2)).mean()
+        nll_latent_prev= -dist.Normal(mu_latent_prev, var_latent_prev.sqrt()).log_prob(y_latent_prev_true).mean(dim=(1, 2)).mean()
         nll= nll_hosp_inc+ nll_hosp_prev+ nll_latent_inc+ nll_latent_prev
         self.log_dict({"kl":kl.item(), "nll":nll.item()})
         # -elbo
@@ -241,7 +247,7 @@ class STNP(pl.LightningModule):
         zs_post= self.sample_z(mu_z_post, var_z_post, y0_target.shape[0])
         #
         embed_out= self.get_input_embedding(x_target, xt_target)
-        y_post= self.get_post(y0_target, embed_out, zs_post)
+        mu_post, var_post= self.get_post(y0_target, embed_out, zs_post)
         #prior latent distribution
         embed_out= self.get_input_embedding(x_context, xt_context)
         mu_z_prior, var_z_prior= self.get_latent_representation(embed_out, y_context, y0_context)
@@ -249,7 +255,7 @@ class STNP(pl.LightningModule):
         self.mu_z_list.append(mu_z_post)
         self.var_z_list.append(var_z_post)
         #
-        loss= self.loss_fn(y_post, y_hosp_inc_target, y_hosp_prev_target, y_latent_inc_target, y_latent_prev_target, mu_z_post, var_z_post, mu_z_prior, var_z_prior)
+        loss= self.loss_fn(mu_post, var_post, y_hosp_inc_target, y_hosp_prev_target, y_latent_inc_target, y_latent_prev_target, mu_z_post, var_z_post, mu_z_prior, var_z_prior)
         #
         wmape= self.compute_wmape(x, xt, y_hosp_inc, y_hosp_prev, y_latent_inc, y_latent_prev, y0_latent_prev)
 
@@ -264,7 +270,8 @@ class STNP(pl.LightningModule):
         embed_out= self.get_input_embedding(x, xt)
         mu_z_post, var_z_post= self.get_latent_representation(embed_out, y_latent_prev, y0_latent_prev)
         zs= self.sample_z(mu_z_post, var_z_post, y0_latent_prev.shape[0])
-        y_post= self.get_post(y0_latent_prev, embed_out, zs)
+        mu_post, var_post= self.get_post(y0_latent_prev, embed_out, zs)
+        y_post= self.sample_post(mu_post, var_post)
         y= torch.concat([y_hosp_inc, y_hosp_prev, y_latent_inc, y_latent_prev], dim=-1)
         return wmape_fn(y_post, y)
     
@@ -290,7 +297,8 @@ class STNP(pl.LightningModule):
         # self.to("cpu")
         x, xt, y_hosp_inc, y_hosp_prev, y_latent_inc, y_latent_prev, y0_latent_prev= batch
         y= torch.concat([y_hosp_inc, y_hosp_prev, y_latent_inc, y_latent_prev], dim=-1)
-        y_pred= self(x, xt, y0_latent_prev)
+        mu_post, var_post= self(x, xt, y0_latent_prev)
+        y_pred= self.sample_post(mu_post, var_post)
         val_mae=  self.mae(y, y_pred)
         #
         wmape_fn= WeightedMeanAbsolutePercentageError().to(y.device)
@@ -308,11 +316,6 @@ class STNP(pl.LightningModule):
         self.log("val_mae", val_mae.item(), on_epoch=True, on_step=False, prog_bar=True)
         self.log("val_wmape", val_wmape.item(), on_epoch=True, on_step=False, prog_bar=False)
         self.log("val_mse", val_mse.item(), on_epoch=True, on_step=False, prog_bar=False)
-        
-     
-    @staticmethod
-    def get_sigma(var_z):
-        return torch.sqrt(var_z)
         
     @staticmethod
     def context_target_split(x, xt, y, y0,
@@ -374,7 +377,8 @@ class STNP(pl.LightningModule):
         y0= self.normalize(y0_latent_prev, y_latent_prev_mean, y_latent_prev_std)
 
         #[B, #nodes, x_dim]
-        y_pred=self(x, xt, y0)
+        mu_post, var_post=self(x, xt, y0)
+        y_pred= self.sample_post(mu_post, var_post)
         y_pred= self.unnormalize(y_pred, self.y_mean, self.y_std)
         return y_pred
                 
@@ -397,11 +401,12 @@ class STNP(pl.LightningModule):
         x= torch.from_numpy(x).float()
         xt= torch.from_numpy(xt).float()
         y0= torch.from_numpy(y0_latent_prev).float()
-        samples=self(x, xt, y0)
+        mu_pred, var_pred=self(x, xt, y0)
+        samples= self.sample_post(mu_pred, var_pred)
         samples= samples.detach().cpu().numpy()
         samples= self.unnormalize(samples, y_mean, y_std)
         samples[samples<0.0]=0.0
-        return samples
+        return np.round(samples)
         
     @staticmethod
     def normalize(data, mean, std):

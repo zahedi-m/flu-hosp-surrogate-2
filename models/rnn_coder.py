@@ -197,6 +197,37 @@ class DecoderRNN_3(torch.nn.Module):
         self.fc_layers= nn.Sequential(*fcs)
 
 
+class DecoderRNN_4(torch.nn.Module):
+
+    def __init__(self,
+                embed_out_dim:int,
+                z_dim:int, 
+                hidden_dims:list,
+                y_dim:int,
+                num_rnn:int=1,
+                **kwarg):
+
+        super().__init__()
+
+        self.hidden_dims= hidden_dims
+        self.y_dim= y_dim
+        self.num_rnn= num_rnn
+
+        input_dim= embed_out_dim+ z_dim
+
+        self.rnn= nn.GRU(input_dim, hidden_dims[0], num_rnn, batch_first=True)
+        self.h0= nn.Parameter(torch.zeros(num_rnn, 1, hidden_dims[0]))
+        fcs=[]
+        input_dim= hidden_dims[0]
+        for hdim in hidden_dims[1:]:
+            fcs.append(nn.Linear(input_dim, hdim))
+            fcs.append(nn.ReLU())
+            input_dim= hdim
+        self.fc_layers= nn.Sequential(*fcs)
+
+        self.mu_f= nn.Linear(hidden_dims[-1], y_dim)
+        self.var_fc= nn.Linear(hidden_dims[-1], y_dim)
+
         self.softplus= nn.Softplus()
         self.relu= nn.ReLU()
 
@@ -217,6 +248,8 @@ class DecoderRNN_3(torch.nn.Module):
         # output:[B, L, hidden]
         output, _= self.rnn(inp, h0)
         
-        y_seq= self.fc_layers(output)
-        
-        return y_seq
+        h_t= self.fc_layers(output)
+
+        mu_t= self.mu_fc(h_t)
+        var_t= self.softplus(self.var_fc(h_t))
+        return mu_t, var_t
