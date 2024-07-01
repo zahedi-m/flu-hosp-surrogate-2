@@ -10,7 +10,7 @@ from .embed import EmbedModel
 
 from .latent_encoder import LatentEncoder
 
-from .rnn_coder import DecoderRNN, EncoderRNN, DecoderRNN_3
+from .rnn_coder import DecoderRNN, EncoderRNN, DecoderRNN_4
 
 from .aggregator import MeanAggregator
 
@@ -60,10 +60,10 @@ class STNP(pl.LightningModule):
         self.rnn_encoder= EncoderRNN(enc_in_dim, self.hparams.r_dim , self.hparams.encoder_num_rnn)
 
         # rnn_ decoder
-        self.rnn_decoder_hosp_inc= DecoderRNN_3(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
-        self.rnn_decoder_hosp_prev= DecoderRNN_3(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
-        self.rnn_decoder_latent_inc= DecoderRNN_3(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
-        self.rnn_decoder_latent_prev= DecoderRNN_3(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
+        self.rnn_decoder_hosp_inc= DecoderRNN_4(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
+        self.rnn_decoder_hosp_prev= DecoderRNN_4(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
+        self.rnn_decoder_latent_inc= DecoderRNN_4(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
+        self.rnn_decoder_latent_prev= DecoderRNN_4(self.hparams.embed_out_dim, self.hparams.z_dim, self.hparams.decoder_hidden_dims, self.hparams.y_dim, self.hparams.decoder_num_rnn)
         
         #latent encoder
         self.z_encoder= LatentEncoder(self.hparams.r_dim, self.hparams.z_dim)
@@ -145,9 +145,8 @@ class STNP(pl.LightningModule):
             @return:
                 zs: [B, L, z_dim]
         """
-        sigma_z= self.get_sigma(var_z)
-        normal_samples= torch.distributions.Normal(0, 1).rsample((num_samples, mu_z.shape[0], mu_z.shape[-1])).to(mu_z.device)
-        zs= mu_z.unsqueeze(0)+ sigma_z.unsqueeze(0)* normal_samples
+        normal_samples= dist.Normal(0, 1).rsample((num_samples, mu_z.shape[0], mu_z.shape[-1])).to(mu_z.device)
+        zs= mu_z.unsqueeze(0)+ var_z.sqrt().unsqueeze(0)* normal_samples
         return zs
     
     def get_latent_representation(self, embed_out, y:Tensor, y0:Tensor)->Tensor:
@@ -193,7 +192,7 @@ class STNP(pl.LightningModule):
                 mu_z_post:Tensor, var_z_post:Tensor, mu_z_prior:Tensor, var_z_prior:Tensor)-> torch.Tensor:
 
         #[seq_len, z_dim]
-        kl= torch.distributions.kl_divergence(dist.Normal(mu_z_post, self.get_sigma(var_z_post)), dist.Normal(mu_z_prior, self.get_sigma(var_z_prior))).sum()
+        kl= torch.distributions.kl_divergence(dist.Normal(mu_z_post, var_z_post.sqrt()), dist.Normal(mu_z_prior, var_z_prior.sqrt())).sum()
         
         mu_hosp_inc, mu_hosp_prev, mu_latent_inc, mu_latent_prev= torch.chunk(mu_post, self.NUM_COMP, dim=-1)
         var_hosp_inc, var_hosp_prev, var_latent_inc, var_latent_prev= torch.chunk(var_post, self.NUM_COMP, dim=-1)
@@ -353,11 +352,13 @@ class STNP(pl.LightningModule):
         return x[idc, ...], xt[idc,...], y[idc,... ], y0[idc], x[idt, ...], xt[idt, ...], y[idt, ...], y0[idt], idc, idt
 
     @torch.no_grad()
-    def predict(self, x:Tensor, xt:Tensor, y0_latent_prev:Tensor):
+    def predict(self, x:Tensor, xt:Tensor, y0_latent_prev:Tensor, normalize_y0=True):
         """
             this method uses the model y_mean and y_std values
             @ input:
                 x, xt, y0_latent_prev
+                normalize_y0:
+                    if True, normalize y0 with self.y_mean and self.y_std
             @ return 
                 torch tensor : [B, T, ydim]
         """
@@ -374,10 +375,12 @@ class STNP(pl.LightningModule):
         if y0_latent_prev.ndim<2:
             y0_latent_prev= y0_latent_prev[np.newaxis, ...]    
 
-        y0= self.normalize(y0_latent_prev, y_latent_prev_mean, y_latent_prev_std)
+        if normalize_y0:
+            y0_latent_prev= self.normalize(y0_latent_prev, y_latent_prev_mean, y_latent_prev_std)
 
+        print(y0_latent_prev)
         #[B, #nodes, x_dim]
-        mu_post, var_post=self(x, xt, y0)
+        mu_post, var_post=self(x, xt, y0_latent_prev)
         y_pred= self.sample_post(mu_post, var_post)
         y_pred= self.unnormalize(y_pred, self.y_mean, self.y_std)
         return y_pred

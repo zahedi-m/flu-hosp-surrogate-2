@@ -38,6 +38,7 @@ class MeanStd:
         for i, batch in enumerate(pool_loader):
             
             x, xt, y0, indices= batch
+            
             x, xt, y0= x.to(self.device), xt.to(self.device), y0.to(self.device)
 
             #[L, B, ydim]

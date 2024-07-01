@@ -225,8 +225,8 @@ class DecoderRNN_4(torch.nn.Module):
             input_dim= hdim
         self.fc_layers= nn.Sequential(*fcs)
 
-        self.mu_f= nn.Linear(hidden_dims[-1], y_dim)
-        self.var_fc= nn.Linear(hidden_dims[-1], y_dim)
+        self.mu_layer= nn.Linear(hidden_dims[-1], y_dim)
+        self.var_layer= nn.Linear(hidden_dims[-1], y_dim)
 
         self.softplus= nn.Softplus()
         self.relu= nn.ReLU()
@@ -250,6 +250,6 @@ class DecoderRNN_4(torch.nn.Module):
         
         h_t= self.fc_layers(output)
 
-        mu_t= self.mu_fc(h_t)
-        var_t= self.softplus(self.var_fc(h_t))
+        mu_t= self.mu_layer(h_t)
+        var_t= self.softplus(self.var_layer(h_t))
         return mu_t, var_t

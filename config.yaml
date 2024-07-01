@@ -34,7 +34,7 @@ model:
   context_percentage: .3
 
 train: 
-  max_epochs: 0
+  max_epochs: 100
   lr: .0001
   lr_encoder: .0001
   lr_decoder: .0001
@@ -51,7 +51,7 @@ train:
 #active learner
 active_learner:
   max_iter: 200
-  initial_train_size: 2
+  initial_train_size: 20
   batch_size_stat_compute: 64 
   retriever_num_workers: 10
   pool_num_workers: 8
@@ -70,8 +70,8 @@ data:
   frac_pops_names: ["Susceptible", "Latent","Recovered"]
   initial_col_names: ["Latent", "Latent_vax", "Hospitalized_symptomatic", "Hospitalized_symptomatic_vax"]
   output_compartments: ["Hospitalized", "Latent"]
-  initial_val_size: 2
-  initial_test_size: 2
+  initial_val_size: 120
+  initial_test_size: 120
 
 # temporal seasonlaity will be added to first dim of x
 # frac_pops are fractions

@@ -27,6 +27,6 @@ class LatentEncoder(torch.nn.Module):
 
         mu_z= self.mu_layer(r)
 
-        var_z= .01+ .99* torch.nn.functional.softplus(self.var_layer(r))
+        var_z= .001+ .999* torch.nn.functional.softplus(self.var_layer(r))
     
         return mu_z, var_z
